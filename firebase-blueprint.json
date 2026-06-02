@@ -1,0 +1,110 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile with credits and usage telemetry.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "The unique user ID matching request.auth.uid" },
+        "email": { "type": "string", "description": "User email address" },
+        "displayName": { "type": "string", "description": "Display name of the user" },
+        "role": { "type": "string", "enum": ["user", "admin"], "description": "User system access role" },
+        "credits": { "type": "integer", "description": "Number of credits the user has left to process images" },
+        "subscriptionTier": { "type": "string", "enum": ["free", "pro", "business"], "description": "Current subscription tier of the user" },
+        "imagesProcessed": { "type": "integer", "description": "Total image processing attempts count" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp when the user account was created" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Timestamp when the profile was last updated" }
+      },
+      "required": ["uid", "email", "role", "credits", "subscriptionTier", "imagesProcessed", "createdAt", "updatedAt"]
+    },
+    "Subscription": {
+      "title": "Subscription",
+      "description": "User subscription payment record and status details.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "The unique user ID" },
+        "stripeSubscriptionId": { "type": "string", "description": "Stripe ID for tracking" },
+        "tier": { "type": "string", "enum": ["pro", "business"], "description": "The targeted active tier" },
+        "status": { "type": "string", "description": "Status of the subscription" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" }
+      },
+      "required": ["userId", "stripeSubscriptionId", "tier", "status", "createdAt"]
+    },
+    "ProcessedImage": {
+      "title": "ProcessedImage",
+      "description": "Information about a reprocessed image optimized for social networks.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "The image log identifier" },
+        "userId": { "type": "string", "description": "User context who uploaded and processed the image" },
+        "originalName": { "type": "string", "description": "Original file name uploaded" },
+        "processedName": { "type": "string", "description": "Processed file name" },
+        "mimeType": { "type": "string", "description": "JPG or PNG mime type" },
+        "originalSize": { "type": "integer", "description": "Size in bytes before optimization" },
+        "processedSize": { "type": "integer", "description": "Size in bytes after optimization" },
+        "exifStripped": { "type": "boolean", "description": "Whether EXIF tags and metadata were stripped" },
+        "pixelJitter": { "type": "boolean", "description": "Whether imperceptible pixel jitter shifts were applied" },
+        "grainApplied": { "type": "boolean", "description": "Whether cinematic high contrast/grain filters were overlaid" },
+        "compressionRate": { "type": "integer", "description": "Compression percentage/quality value utilized" },
+        "downloadUrl": { "type": "string", "description": "Storage download URL of the reprocessed image" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp of processing" }
+      },
+      "required": ["id", "userId", "originalName", "processedName", "mimeType", "originalSize", "processedSize", "exifStripped", "downloadUrl", "createdAt"]
+    },
+    "UsageLog": {
+      "title": "UsageLog",
+      "description": "System telemetry audit logs for security, platform monitoring and accounting.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique log GUID" },
+        "userId": { "type": "string", "description": "Action actor" },
+        "action": { "type": "string", "description": "The description of the event" },
+        "creditsDeducted": { "type": "integer", "description": "Credits subtracted" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Log timestamp" }
+      },
+      "required": ["id", "userId", "action", "creditsDeducted", "createdAt"]
+    },
+    "Preset": {
+      "title": "Preset",
+      "description": "Custom image processing option layouts saved by users.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "The custom preset identifier" },
+        "userId": { "type": "string", "description": "Owner userId" },
+        "name": { "type": "string", "description": "User visible name" },
+        "exifStripped": { "type": "boolean" },
+        "pixelJitter": { "type": "boolean" },
+        "grainApplied": { "type": "boolean" },
+        "antiAiPerturbation": { "type": "boolean" },
+        "grainIntensity": { "type": "integer" },
+        "compressionRate": { "type": "integer" },
+        "outputFormat": { "type": "string", "enum": ["image/jpeg", "image/png"] },
+        "grainFilterType": { "type": "string", "enum": ["standard", "cinematic", "expired_kodak", "vintage_fuji"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "name", "exifStripped", "pixelJitter", "grainApplied", "antiAiPerturbation", "grainIntensity", "compressionRate", "outputFormat", "grainFilterType", "createdAt"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": "User",
+      "description": "Access profile for each SaaS client"
+    },
+    "subscriptions/{subscriptionId}": {
+      "schema": "Subscription",
+      "description": "Payments and subscription history mapped to user accounts"
+    },
+    "processed_images/{imageId}": {
+      "schema": "ProcessedImage",
+      "description": "Stores transaction logs of all image processing events"
+    },
+    "usage_logs/{logId}": {
+      "schema": "UsageLog",
+      "description": "Usage activity tracking logs"
+    },
+    "presets/{presetId}": {
+      "schema": "Preset",
+      "description": "User custom configurations for processing"
+    }
+  }
+}

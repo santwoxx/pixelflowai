@@ -1,0 +1,8 @@
+{
+  "name": "PixelFlow AI",
+  "description": "Transforme imagens IA em conteúdo mais natural para redes sociais com reprocessamento profissional, remoção de metadados, textura cinematográfica e compressão inteligente.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

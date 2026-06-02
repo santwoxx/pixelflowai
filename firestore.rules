@@ -1,0 +1,163 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Permitír leitura de teste de conexão
+    match /test/{document} {
+      allow read: if true;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      // Mandamento de segurança: Usuário ativo e e-mail obrigatoriamente verificado pelo provedor
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        request.auth.token.email == 'santwomusic@gmail.com' ||
+        request.auth.token.email == 'brisasofc@gmail.com' ||
+        request.auth.token.email == 'admin@pixelflow.ai'
+      );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Validação de Usuários (users)
+    function isValidUserCreate(user) {
+      return user.uid == request.auth.uid &&
+             user.email is string && user.email.size() <= 128 &&
+             user.displayName is string && user.displayName.size() <= 128 &&
+             user.role == 'user' &&
+             user.credits is int && user.credits >= 0 &&
+             user.subscriptionTier in ['free', 'pro', 'business'] &&
+             user.plan in ['FREE', 'PROFISSIONAL', 'CORPORATIVO'] &&
+             user.subscriptionStatus in ['inactive', 'active', 'cancelled'] &&
+             (user.subscriptionId == null || user.subscriptionId is string) &&
+             user.imagesProcessed is int && user.imagesProcessed >= 0 &&
+             user.createdAt == request.time &&
+             user.updatedAt == request.time;
+    }
+
+    function isValidUserUpdate(user, existingUser) {
+      return user.uid == existingUser.uid &&
+             user.email == existingUser.email &&
+             user.displayName is string && user.displayName.size() <= 128 &&
+             (isAdmin() || (
+               user.role == existingUser.role &&
+               user.credits == existingUser.credits &&
+               user.subscriptionTier == existingUser.subscriptionTier &&
+               user.plan == existingUser.plan &&
+               user.subscriptionStatus == existingUser.subscriptionStatus &&
+               user.subscriptionId == existingUser.subscriptionId &&
+               user.imagesProcessed == existingUser.imagesProcessed
+             )) &&
+             user.createdAt == existingUser.createdAt &&
+             user.updatedAt == request.time;
+    }
+
+    match /users/{userId} {
+      allow get: if isOwner(userId) || isAdmin();
+      allow list: if isAdmin();
+      allow create: if isOwner(userId) && isValidId(userId) && isValidUserCreate(request.resource.data);
+      allow update: if isOwner(userId) && isValidId(userId) && isValidUserUpdate(request.resource.data, resource.data);
+      allow delete: if isAdmin();
+    }
+
+    // Validação de Assinaturas (subscriptions)
+    function isValidSubscriptionCreate(sub) {
+      return sub.userId == request.auth.uid &&
+             sub.stripeSubscriptionId is string && sub.stripeSubscriptionId.size() <= 128 &&
+             sub.tier in ['pro', 'business'] &&
+             sub.status is string && sub.status.size() <= 64 &&
+             sub.createdAt == request.time;
+    }
+
+    match /subscriptions/{subscriptionId} {
+      allow get: if isSignedIn() && isValidId(subscriptionId) && (resource.data.userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && isValidId(subscriptionId) && request.resource.data.userId == request.auth.uid && isValidSubscriptionCreate(request.resource.data);
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Validação de Imagens Processadas (processed_images)
+    function isValidProcessedImage(img) {
+      return img.id is string && img.id.size() <= 128 &&
+             img.userId == request.auth.uid &&
+             img.originalName is string && img.originalName.size() <= 256 &&
+             img.processedName is string && img.processedName.size() <= 256 &&
+             img.mimeType in ['image/jpeg', 'image/png'] &&
+             img.originalSize is int && img.originalSize >= 0 &&
+             img.processedSize is int && img.processedSize >= 0 &&
+             img.exifStripped is bool &&
+             img.pixelJitter is bool &&
+             img.grainApplied is bool &&
+             img.compressionRate is int && img.compressionRate >= 0 && img.compressionRate <= 100 &&
+             img.downloadUrl is string && img.downloadUrl.size() <= 2048 &&
+             img.createdAt == request.time;
+    }
+
+    match /processed_images/{imageId} {
+      allow get: if isSignedIn() && isValidId(imageId) && (resource.data.userId == request.auth.uid || isAdmin());
+      // O 'list' no Firestore exige consulta de índice segura baseada no ID do usuário para evitar vazamento
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && isValidId(imageId) && request.resource.data.userId == request.auth.uid && isValidProcessedImage(request.resource.data);
+      allow update: if isAdmin();
+      allow delete: if isSignedIn() && isValidId(imageId) && (resource.data.userId == request.auth.uid || isAdmin());
+    }
+
+    // Validação dos Logs de Uso (usage_logs)
+    function isValidUsageLog(log) {
+      return log.id is string && log.id.size() <= 128 &&
+             log.userId == request.auth.uid &&
+             log.action is string && log.action.size() <= 256 &&
+             log.creditsDeducted is int && log.creditsDeducted >= 0 &&
+             log.createdAt == request.time;
+    }
+
+    match /usage_logs/{logId} {
+      allow get: if isSignedIn() && isValidId(logId) && (resource.data.userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && isValidId(logId) && request.resource.data.userId == request.auth.uid && isValidUsageLog(request.resource.data);
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
+    // Validação de Presets (presets)
+    function isValidPreset(preset) {
+      return preset.id is string && preset.id.size() <= 128 &&
+             preset.userId == request.auth.uid &&
+             preset.name is string && preset.name.size() <= 128 &&
+             preset.exifStripped is bool &&
+             preset.pixelJitter is bool &&
+             preset.grainApplied is bool &&
+             preset.antiAiPerturbation is bool &&
+             preset.grainIntensity is int && preset.grainIntensity >= 0 && preset.grainIntensity <= 100 &&
+             preset.compressionRate is int && preset.compressionRate >= 0 && preset.compressionRate <= 100 &&
+             preset.outputFormat in ['image/jpeg', 'image/png'] &&
+             preset.grainFilterType is string && preset.grainFilterType.size() <= 128 &&
+             preset.createdAt == request.time;
+    }
+
+    match /presets/{presetId} {
+      allow get: if isSignedIn() && isValidId(presetId) && (resource.data.userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && isValidId(presetId) && request.resource.data.userId == request.auth.uid && isValidPreset(request.resource.data);
+      allow update: if false;
+      allow delete: if isSignedIn() && isValidId(presetId) && (resource.data.userId == request.auth.uid || isAdmin());
+    }
+  }
+}

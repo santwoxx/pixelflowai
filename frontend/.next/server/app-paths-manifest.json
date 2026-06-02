@@ -1,0 +1,12 @@
+{
+  "/_global-error/page": "app/_global-error/page.js",
+  "/_not-found/page": "app/_not-found/page.js",
+  "/api/mercadopago/checkout/route": "app/api/mercadopago/checkout/route.js",
+  "/api/mercadopago/verify/route": "app/api/mercadopago/verify/route.js",
+  "/api/mercadopago/webhook/route": "app/api/mercadopago/webhook/route.js",
+  "/api/process-image/route": "app/api/process-image/route.js",
+  "/app/page": "app/app/page.js",
+  "/checkout-success/page": "app/checkout-success/page.js",
+  "/page": "app/page.js",
+  "/webhook/mercadopago/route": "app/webhook/mercadopago/route.js"
+}
