@@ -112,7 +112,7 @@ const handleProcessImage = async (req: express.Request, res: express.Response): 
         const userRef = db.collection('users').doc(userId);
         const snapshot = await userRef.get();
         if (snapshot.exists) {
-          const userData = snapshot.data();
+          const userData = snapshot.data() || {};
           const tier = userData.subscriptionTier || 'free';
           const credits = userData.credits ?? 5;
           const role = userData.role || 'user';
