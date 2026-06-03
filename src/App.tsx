@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Sparkles, LogOut, Shield, LayoutDashboard, Compass, CreditCard, ChevronRight, Check, X, ShieldCheck, RefreshCw, Star } from 'lucide-react';
 import { auth, db, logoutUser } from './firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { UserProfile, SubscriptionTier } from './types';
 
 // Modularity component imports
@@ -92,11 +92,23 @@ export default function App() {
 
       if (snapshot.exists()) {
         const d = snapshot.data();
+        const isAdmin = authUser.email === 'santwomusic@gmail.com' || authUser.email === 'brisasofc@gmail.com' || authUser.email === 'admin@pixelflow.ai';
+        let role = d.role || 'user';
+
+        if (isAdmin && role !== 'admin') {
+          role = 'admin';
+          try {
+            await updateDoc(docRef, { role: 'admin' });
+          } catch (upgErr) {
+            console.error("Erro ao atualizar papel para admin em fetchProfile:", upgErr);
+          }
+        }
+
         setProfile({
           uid: uid,
           email: d.email || authUser.email || '',
           displayName: d.displayName || authUser.displayName || 'Usuário',
-          role: d.role || 'user',
+          role,
           credits: d.credits ?? 5,
           subscriptionTier: d.subscriptionTier || 'free',
           imagesProcessed: d.imagesProcessed || 0,

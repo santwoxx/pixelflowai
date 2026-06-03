@@ -297,9 +297,13 @@ export default function DashboardClient({ userProfile, onRefreshProfile, onOpenP
   }, [userProfile.uid]);
 
   const handleFile = (file: File) => {
-    const isFree = userProfile.subscriptionTier === 'free' && userProfile.role !== 'admin';
-    if (isFree && userProfile.credits <= 0) {
-      alert('Você atingiu o limite de créditos do plano Grátis. Atualize para o plano Pro para continuar.');
+    const isAdmin = userProfile.role === 'admin';
+    if (!isAdmin && userProfile.credits <= 0) {
+      if (userProfile.subscriptionTier === 'free') {
+        alert('Você esgotou os créditos gratuitos do plano Grátis. Inscreva-se em um plano para continuar.');
+      } else {
+        alert('Você esgotou os créditos da sua assinatura. Adquira mais créditos ou atualize o plano para continuar.');
+      }
       onOpenPlanSelector();
       return;
     }
@@ -332,9 +336,13 @@ export default function DashboardClient({ userProfile, onRefreshProfile, onOpenP
   const processImage = async () => {
     if (!image) return;
     
-    const isFree = userProfile.subscriptionTier === 'free' && userProfile.role !== 'admin';
-    if (userProfile.credits <= 0 && isFree) {
-      alert('Você atingiu o limite de créditos do plano Grátis. Atualize para o Pro para obter processamento ilimitado.');
+    const isAdmin = userProfile.role === 'admin';
+    if (!isAdmin && userProfile.credits <= 0) {
+      if (userProfile.subscriptionTier === 'free') {
+        alert('Você esgotou os créditos gratuitos do plano Grátis. Inscreva-se em um plano para continuar.');
+      } else {
+        alert('Você esgotou os créditos da sua assinatura. Adquira mais créditos ou atualize o plano para continuar.');
+      }
       onOpenPlanSelector();
       return;
     }
@@ -533,22 +541,22 @@ Livre para distribuição pública e anonimização em canais sociais.
             <span className="text-[10px] font-black text-slate-500 font-mono uppercase tracking-widest block mb-1">Créditos Disponíveis</span>
             <div className="flex items-center justify-end gap-1.5 text-amber-400 font-black text-sm uppercase tracking-wider font-mono">
               <Zap className="h-3.5 w-3.5 text-amber-400" />
-              <span>{(userProfile.subscriptionTier === 'free' && userProfile.role !== 'admin') ? userProfile.credits : 'Ilimitado'}</span>
+              <span>{userProfile.role === 'admin' ? 'Ilimitado' : userProfile.credits}</span>
             </div>
           </div>
-          {userProfile.subscriptionTier === 'free' && userProfile.role !== 'admin' && (
+          {userProfile.role !== 'admin' && (
             <button
               onClick={onOpenPlanSelector}
               className="ml-2 rounded-full bg-amber-400 hover:bg-amber-300 px-4 py-1.5 text-[9px] font-black uppercase tracking-widest text-slate-950 transition-colors cursor-pointer"
             >
-              Upgrade
+              Adquirir Créditos / Planos
             </button>
           )}
         </div>
       </div>
 
       {/* Workflow Area */}
-      {userProfile.subscriptionTier === 'free' && userProfile.role !== 'admin' && userProfile.credits <= 0 ? (
+      {userProfile.role !== 'admin' && userProfile.credits <= 0 ? (
         <div className="rounded-2xl border border-amber-500/20 bg-gradient-to-b from-slate-900/80 to-slate-950/80 p-8 sm:p-12 text-center mb-16 shadow-2xl relative overflow-hidden backdrop-blur-md">
           {/* Decorative glowing backdrops */}
           <div className="absolute top-0 left-1/2 -translate-x-1/2 w-96 h-96 bg-amber-500/10 rounded-full blur-[100px] pointer-events-none" />
@@ -562,8 +570,16 @@ Livre para distribuição pública e anonimização em canais sociais.
           </h2>
           
           <p className="mt-4 text-xs sm:text-sm text-slate-400 font-medium max-w-2xl mx-auto leading-relaxed">
-            Você já utilizou com sucesso os seus <span className="text-amber-400 font-bold">5 créditos gratuitos</span> de purificação de imagens e proteção de privacidade.
-            Para continuar removendo metadados EXIF/XMP escondidos, aplicando grão analógico de prata, usando o algoritmo de Pixel Jitter e nossa <span className="text-white font-bold">Perturbação Invisível Anti-Detector de IA</span>, assine um plano de alta fidelidade.
+            {userProfile.subscriptionTier === 'free' ? (
+              <>
+                Você já utilizou com sucesso os seus de <span className="text-amber-400 font-bold">5 créditos gratuitos</span> de purificação de imagens e proteção de privacidade.
+              </>
+            ) : (
+              <>
+                Você esgotou todos os créditos da sua assinatura atual.
+              </>
+            )}
+            Para continuar removendo metadados EXIF/XMP escondidos, aplicando grão analógico de prata, usando o algoritmo de Pixel Jitter e nossa <span className="text-white font-bold">Perturbação Invisível Anti-Detector de IA</span>, assine ou renove um de nossos planos.
           </p>
 
           <div className="mt-10 grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl mx-auto text-left">

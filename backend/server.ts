@@ -109,7 +109,7 @@ const handleProcessImage = async (req: express.Request, res: express.Response): 
     const socialNetworkFilter = req.body.socialNetworkFilter || 'none';
 
     // Verify credits in Firestore database
-    let isFreeUser = true;
+    let isAdmin = false;
     let userTier = 'free';
     if (userId && userId !== 'anonymous' && db) {
       try {
@@ -119,20 +119,37 @@ const handleProcessImage = async (req: express.Request, res: express.Response): 
           const userData = snapshot.data();
           const tier = userData.subscriptionTier || 'free';
           const credits = userData.credits ?? 5;
-          const role = userData.role || 'user';
+          const email = userData.email || '';
+          const isAdminEmail = email === 'santwomusic@gmail.com' || email === 'brisasofc@gmail.com' || email === 'admin@pixelflow.ai';
+          let role = userData.role || 'user';
+
+          if (isAdminEmail && role !== 'admin') {
+            role = 'admin';
+            try {
+              await updateDoc(userRef, { role: 'admin' });
+            } catch (upgErr) {
+              console.error("Erro ao atualizar papel do admin no backend:", upgErr);
+            }
+          }
+
           userTier = role === 'admin' ? 'business' : tier;
           
           if (role === 'admin') {
-            isFreeUser = false;
-          } else if (tier === 'free') {
+            isAdmin = true;
+          }
+          
+          if (!isAdmin) {
             if (credits <= 0) {
-              return res.status(403).json({
-                error: 'Você atingiu o limite de créditos do plano Grátis. Atualize para o Pro para continuar.'
-              });
+              if (tier === 'free') {
+                return res.status(403).json({
+                  error: 'Você atingiu o limite de 5 créditos do plano Grátis. Inscreva-se em um plano para continuar.'
+                });
+              } else {
+                return res.status(403).json({
+                  error: 'Você esgotou os créditos da sua assinatura. Renove ou adquira mais créditos para continuar.'
+                });
+              }
             }
-            isFreeUser = true;
-          } else {
-            isFreeUser = false;
           }
         }
       } catch (dbError) {
@@ -356,7 +373,7 @@ const handleProcessImage = async (req: express.Request, res: express.Response): 
         const logId = 'log_' + Math.random().toString(36).substring(2, 11);
         const logRef = doc(db, 'usage_logs', logId);
 
-        const creditsDeducted = isFreeUser ? 1 : 0;
+        const creditsDeducted = isAdmin ? 0 : 1;
 
         await setDoc(imgRef, {
           id: imgId,
@@ -376,7 +393,7 @@ const handleProcessImage = async (req: express.Request, res: express.Response): 
         });
 
         await updateDoc(userRef, {
-          credits: isFreeUser ? increment(-1) : increment(0),
+          credits: isAdmin ? increment(0) : increment(-1),
           imagesProcessed: increment(1),
           updatedAt: serverTimestamp()
         });

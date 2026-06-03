@@ -214,12 +214,12 @@ export default function AdminDashboard() {
                         {user.imagesProcessed} refinadas
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap font-mono">
-                        {user.subscriptionTier === 'free' ? (
+                        {user.role === 'admin' ? (
+                          <span className="text-amber-400 font-bold">♾️ Admin</span>
+                        ) : (
                           <span className={`${user.credits <= 0 ? 'text-red-400 font-bold' : 'text-slate-200'}`}>
                             {user.credits} restantes
                           </span>
-                        ) : (
-                          <span className="text-emerald-400 font-bold">♾️ Ilimitado</span>
                         )}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">

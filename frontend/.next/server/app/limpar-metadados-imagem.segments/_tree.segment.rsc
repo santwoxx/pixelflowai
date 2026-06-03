@@ -1,0 +1,2 @@
+:HL["/_next/static/chunks/0g78cv58go_tb.css","style"]
+0:{"tree":{"name":"","param":null,"prefetchHints":16,"slots":{"children":{"name":"slug","param":{"type":"d","key":"limpar-metadados-imagem","siblings":null},"prefetchHints":0,"slots":{"children":{"name":"__PAGE__","param":null,"prefetchHints":0,"slots":null}}}}},"staleTime":300,"buildId":"GgB6bouen7VPNsa0dUivr"}

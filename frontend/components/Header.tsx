@@ -79,7 +79,7 @@ export default function Header() {
               <div className="hidden sm:block text-right">
                 <span className="text-xs font-semibold text-slate-100 block">{profile.displayName}</span>
                 <span className="text-[9px] text-amber-400 font-bold uppercase tracking-wider block font-mono">
-                  {profile.subscriptionTier === 'free' && profile.role !== 'admin' ? `${profile.credits} Créditos` : 'Acesso Ilimitado'}
+                  {profile.role === 'admin' ? 'Acesso Ilimitado' : `${profile.credits} Créditos`}
                 </span>
               </div>
 

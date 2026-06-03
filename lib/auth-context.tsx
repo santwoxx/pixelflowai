@@ -3,7 +3,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { auth, db } from '@/src/firebase';
 import { onAuthStateChanged, User, signOut, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { UserProfile, SubscriptionTier } from '@/src/types';
 import { useRouter } from 'next/navigation';
 
@@ -41,11 +41,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const snapshot = await getDoc(docRef);
       if (snapshot.exists()) {
         const d = snapshot.data();
+        const isAdmin = auth.currentUser.email === 'santwomusic@gmail.com' || auth.currentUser.email === 'brisasofc@gmail.com' || auth.currentUser.email === 'admin@pixelflow.ai';
+        let role = d.role || 'user';
+
+        if (isAdmin && role !== 'admin') {
+          role = 'admin';
+          try {
+            await updateDoc(docRef, { role: 'admin' });
+          } catch (upgErr) {
+            console.error("Erro ao atualizar papel para admin em refreshProfile:", upgErr);
+          }
+        }
+
         setProfile({
           uid,
           email: d.email || auth.currentUser.email || '',
           displayName: d.displayName || auth.currentUser.displayName || 'Usuário',
-          role: d.role || 'user',
+          role,
           credits: d.credits ?? 5,
           subscriptionTier: d.subscriptionTier || 'free',
           imagesProcessed: d.imagesProcessed || 0,
@@ -83,11 +95,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
           if (snapshot.exists()) {
             const d = snapshot.data();
+            const isAdmin = authUser.email === 'santwomusic@gmail.com' || authUser.email === 'brisasofc@gmail.com' || authUser.email === 'admin@pixelflow.ai';
+            let role = d.role || 'user';
+
+            if (isAdmin && role !== 'admin') {
+              role = 'admin';
+              try {
+                await updateDoc(docRef, { role: 'admin' });
+              } catch (upgErr) {
+                console.error("Erro ao atualizar papel para admin em onAuthStateChanged:", upgErr);
+              }
+            }
+
             setProfile({
               uid,
               email: d.email || authUser.email || '',
               displayName: d.displayName || authUser.displayName || 'Usuário',
-              role: d.role || 'user',
+              role,
               credits: d.credits ?? 5,
               subscriptionTier: d.subscriptionTier || 'free',
               imagesProcessed: d.imagesProcessed || 0,

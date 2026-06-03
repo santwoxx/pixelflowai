@@ -1,12 +1,18 @@
 {
+  "/[slug]/page": "/[slug]",
   "/_global-error/page": "/_global-error",
   "/_not-found/page": "/_not-found",
+  "/admin/page": "/admin",
   "/api/mercadopago/checkout/route": "/api/mercadopago/checkout",
   "/api/mercadopago/verify/route": "/api/mercadopago/verify",
   "/api/mercadopago/webhook/route": "/api/mercadopago/webhook",
   "/api/process-image/route": "/api/process-image",
   "/app/page": "/app",
+  "/blog/[slug]/page": "/blog/[slug]",
+  "/blog/page": "/blog",
   "/checkout-success/page": "/checkout-success",
   "/page": "/",
+  "/robots.txt/route": "/robots.txt",
+  "/sitemap.xml/route": "/sitemap.xml",
   "/webhook/mercadopago/route": "/webhook/mercadopago"
 }

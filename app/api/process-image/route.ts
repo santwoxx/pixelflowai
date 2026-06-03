@@ -73,7 +73,8 @@ export async function POST(req: NextRequest) {
     const outputFormat = (formData.get('outputFormat') as string) || 'image/jpeg';
 
     // Check credits before expensive processing
-    let isFreeUser = true;
+    let isAdmin = false;
+    let userTier = 'free';
     if (userId && userId !== 'anonymous' && db) {
       try {
         const userRef = doc(db, 'users', userId);
@@ -82,20 +83,38 @@ export async function POST(req: NextRequest) {
           const userData = snapshot.data();
           const tier = userData.subscriptionTier || 'free';
           const credits = userData.credits ?? 5;
-          const role = userData.role || 'user';
-          
-          if (role === 'admin') {
-            isFreeUser = false;
-          } else if (tier === 'free') {
-            if (credits <= 0) {
-              return NextResponse.json(
-                { error: 'Você atingiu o limite de créditos do plano Grátis. Atualize para o Pro para continuar.' },
-                { status: 403 }
-              );
+          const email = userData.email || '';
+          const isAdminEmail = email === 'santwomusic@gmail.com' || email === 'brisasofc@gmail.com' || email === 'admin@pixelflow.ai';
+          let role = userData.role || 'user';
+
+          if (isAdminEmail && role !== 'admin') {
+            role = 'admin';
+            try {
+              await updateDoc(userRef, { role: 'admin' });
+            } catch (upgErr) {
+              console.error("Erro ao atualizar papel do admin no endpoint de process-image:", upgErr);
             }
-            isFreeUser = true;
-          } else {
-            isFreeUser = false;
+          }
+          
+          userTier = tier;
+          if (role === 'admin') {
+            isAdmin = true;
+          }
+          
+          if (!isAdmin) {
+            if (credits <= 0) {
+              if (tier === 'free') {
+                return NextResponse.json(
+                  { error: 'Você atingiu o limite de 5 créditos do plano Grátis. Inscreva-se em um plano para continuar.' },
+                  { status: 403 }
+                );
+              } else {
+                return NextResponse.json(
+                  { error: 'Você esgotou os créditos da sua assinatura. Renove ou adquira mais créditos para continuar.' },
+                  { status: 403 }
+                );
+              }
+            }
           }
         }
       } catch (dbError) {
@@ -231,8 +250,8 @@ export async function POST(req: NextRequest) {
         const logId = 'log_' + Math.random().toString(36).substring(2, 11);
         const logRef = doc(db, 'usage_logs', logId);
 
-        // Account balance credit change calculations (deduct 1 if free user)
-        const creditsDeducted = isFreeUser ? 1 : 0;
+        // Account balance credit change calculations (deduct 1 if not admin)
+        const creditsDeducted = isAdmin ? 0 : 1;
 
         await setDoc(imgRef, {
           id: imgId,
@@ -252,7 +271,7 @@ export async function POST(req: NextRequest) {
 
         // Update the user's credits and total imagesProcessed count
         await updateDoc(userRef, {
-          credits: isFreeUser ? increment(-1) : increment(0),
+          credits: isAdmin ? increment(0) : increment(-1),
           imagesProcessed: increment(1),
           updatedAt: serverTimestamp()
         });
