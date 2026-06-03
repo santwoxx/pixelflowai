@@ -123,6 +123,7 @@ const handleProcessImage = async (req: express.Request, res: express.Response): 
             isFreeUser = false;
           } else if (tier === 'free') {
             if (credits <= 0) {
+              console.log(`[CREDITS] User ${userId} blocked. Credits: ${credits}, Tier: ${tier}.`);
               return res.status(403).json({
                 error: 'Você atingiu o limite de créditos do plano Grátis. Atualize para o Pro para continuar.'
               });
@@ -385,6 +386,8 @@ const handleProcessImage = async (req: express.Request, res: express.Response): 
           updatedAt: admin.firestore.FieldValue.serverTimestamp()
         });
 
+        console.log(`[CREDITS] User ${userId} deducted ${creditsDeducted} credits. Free User: ${isFreeUser}`);
+
         await logRef.set({
           id: logId,
           userId,
@@ -433,6 +436,8 @@ app.post('/api/mercadopago/checkout', async (req, res): Promise<any> => {
     } else {
       url = `https://www.mercadopago.com.br/subscriptions/checkout?preapproval_plan_id=38092dc79d2440ac8ffba85282893b4a&external_reference=${userId}&email=${encodeURIComponent(email || "")}`;
     }
+
+    console.log(`[CHECKOUT] Checkout URL created for userId: ${userId}, Tier: ${tier}`);
 
     return res.json({
       id: `preapproval-${tier}`,
@@ -523,7 +528,11 @@ app.post('/api/mercadopago/verify', async (req, res): Promise<any> => {
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
-    console.log(`[Production Render Gateway] Approved and upgraded ${externalRefUserId} to ${tier}.`);
+    console.log(`[FIREBASE] User ${externalRefUserId} updated in Firestore.`);
+    console.log(`[CREDITS] Added ${creditsToInject} credits to user ${externalRefUserId}.`);
+    console.log(`[SUBSCRIPTION] User ${externalRefUserId} tier changed to ${tier}.`);
+    console.log(`[WEBHOOK] Manual verify gateway approved and upgraded ${externalRefUserId} to ${tier}.`);
+
     return res.json({ success: true, tier });
 
   } catch (err: any) {
@@ -536,19 +545,18 @@ app.post('/api/mercadopago/verify', async (req, res): Promise<any> => {
 const handleMercadoPagoWebhook = async (req: express.Request, res: express.Response): Promise<any> => {
   try {
     console.log('--- NOVO EVENTO MERCADO PAGO ---');
-    console.log(`MÉTODO: ${req.method}`);
-    console.log(`URL: ${req.originalUrl}`);
-    console.log(`BODY RECEBIDO:`, JSON.stringify(req.body, null, 2));
-    console.log(`QUERY RECEBIDA:`, JSON.stringify(req.query, null, 2));
+    console.log(`[WEBHOOK] MÉTODO: ${req.method} | URL: ${req.originalUrl}`);
+    console.log(`[WEBHOOK] BODY RECEBIDO:`, JSON.stringify(req.body, null, 2));
+    console.log(`[WEBHOOK] QUERY RECEBIDA:`, JSON.stringify(req.query, null, 2));
     console.log('--------------------------------');
 
     const id = req.body?.data?.id || req.body?.id || req.query?.id || req.query?.['data.id'];
     const type = req.body?.type || req.body?.action || req.query?.topic || req.query?.type;
 
-    console.log(`[Express Webhook Extract] ID extraído: ${id}, Tipo extraído: ${type}`);
+    console.log(`[WEBHOOK] ID extraído: ${id}, Tipo extraído: ${type}`);
 
     if (!id || !type) {
-      console.log(`[Express Webhook] Ignorando notificação sem ID ou Tipo. Retornando 200 OK.`);
+      console.log(`[WEBHOOK] Ignorando notificação sem ID ou Tipo. Retornando 200 OK.`);
       return res.status(200).json({ success: true, message: "Webhook ping received, but no valid resource ID or type found." });
     }
 
@@ -697,12 +705,14 @@ const handleMercadoPagoWebhook = async (req: express.Request, res: express.Respo
       createdAt: new Date().toISOString()
     });
 
+    const creditsToInject = tier === "business" ? 5000 : 1200;
+
     await userRef.update({
       plan: mappedPlan,
       subscriptionTier: tier,
       subscriptionStatus: "active",
       subscriptionId: String(id),
-      credits: 999999,
+      credits: admin.firestore.FieldValue.increment(creditsToInject),
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
@@ -717,7 +727,10 @@ const handleMercadoPagoWebhook = async (req: express.Request, res: express.Respo
       status: "active"
     });
 
-    console.log(`[Express Webhook Integration upgraded successfully] User ${externalRefUserId} updated to ${mappedPlan} subscription.`);
+    console.log(`[FIREBASE] Firestore documents updated for webhook ${id}.`);
+    console.log(`[CREDITS] Added ${creditsToInject} credits to user ${externalRefUserId}.`);
+    console.log(`[SUBSCRIPTION] User ${externalRefUserId} tier changed to ${tier} (${mappedPlan}).`);
+    console.log(`[WEBHOOK] Integration upgraded successfully. User ${externalRefUserId} updated.`);
     return res.json({ success: true, processed: true, tier });
 
   } catch (err: any) {
