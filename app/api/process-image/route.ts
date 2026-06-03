@@ -1,6 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import path from 'path';
-import fs from 'fs';
 import sharp from 'sharp';
 import { db, storage } from '@/lib/firebase-server';
 import { doc, getDoc, setDoc, serverTimestamp, updateDoc, increment } from 'firebase/firestore';
@@ -205,7 +203,7 @@ export async function POST(req: NextRequest) {
 
     let downloadUrl = '';
 
-    // 6. Double storage layer: attempt Firebase Storage first with graceful local uploads directory fallback
+    // Upload to Firebase Storage only (Vercel has read-only filesystem)
     try {
       const storagePath = `processed_images/${userId}/${imgId}-${processedName}`;
       const storageRef = ref(storage, storagePath);
@@ -215,19 +213,11 @@ export async function POST(req: NextRequest) {
       });
       downloadUrl = await getDownloadURL(snapshot.ref);
     } catch (storageError) {
-      console.warn("Firebase Storage fallback applied. Storing local folder assets.", storageError);
-      
-      const UPLOADS_DIR = path.join(process.cwd(), 'public', 'uploads');
-      if (!fs.existsSync(UPLOADS_DIR)) {
-        fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-      }
-
-      const hashParam = `${pixelJitter ? 'j' : 'n'}${grainApplied ? `g${grainIntensity}` : 'n'}`;
-      const localFileName = `${imgId}-${hashParam}-${processedName}`;
-      const localFilePath = path.join(UPLOADS_DIR, localFileName);
-      
-      fs.writeFileSync(localFilePath, processedBuffer);
-      downloadUrl = `/uploads/${localFileName}`;
+      console.error("Firebase Storage upload failed. Ensure FIREBASE_STORAGE_BUCKET env var is set and Firebase is properly configured.", storageError);
+      return NextResponse.json(
+        { error: 'Falha ao armazenar a imagem processada. Verifique a configuração do Firebase Storage.' },
+        { status: 500 }
+      );
     }
 
     // 7. Sync transactional logs and account balances to Firestore
