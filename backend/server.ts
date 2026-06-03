@@ -1,4 +1,5 @@
 import express from 'express';
+// @ts-ignore
 import cors from 'cors';
 import multer from 'multer';
 import sharp from 'sharp';
@@ -20,7 +21,7 @@ const allowedOrigins = [
 ].filter(Boolean) as string[];
 
 app.use(cors({
-  origin: (origin, callback) => {
+  origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
     // Allow requests with no origin (like mobile apps or curl)
     if (!origin) return callback(null, true);
     if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV !== 'production') {
