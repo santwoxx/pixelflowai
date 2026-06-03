@@ -109,49 +109,60 @@ const handleProcessImage = async (req: express.Request, res: express.Response): 
     // Verify credits in Firestore database
     let isAdmin = false;
     let userTier = 'free';
-    if (userId && userId !== 'anonymous' && db) {
+    if (!db) {
+      return res.status(500).json({ error: 'Falha crítica: Banco de dados indisponível.' });
+    }
+    if (!userId || userId === 'anonymous') {
+      return res.status(401).json({ error: 'Usuário não autenticado. Por favor, faça login.' });
+    }
+
+    const userRef = db.collection('users').doc(userId);
+    let snapshot;
+    try {
+      snapshot = await userRef.get();
+    } catch (dbError: any) {
+      console.error("Erro ao carregar dados do usuário no banco de dados:", dbError);
+      return res.status(500).json({
+        error: 'Erro ao verificar créditos no banco de dados. Por favor, tente novamente.'
+      });
+    }
+
+    if (!snapshot.exists) {
+      return res.status(404).json({ error: 'Perfil de usuário não encontrado no banco de dados.' });
+    }
+
+    const userData = snapshot.data() || {};
+    const tier = userData.subscriptionTier || 'free';
+    const credits = userData.credits ?? 5;
+    const email = userData.email || '';
+    const isAdminEmail = email === 'santwomusic@gmail.com' || email === 'brisasofc@gmail.com' || email === 'admin@pixelflow.ai';
+    let role = userData.role || 'user';
+
+    if (isAdminEmail && role !== 'admin') {
+      role = 'admin';
       try {
-        const userRef = db.collection('users').doc(userId);
-        const snapshot = await userRef.get();
-        if (snapshot.exists) {
-          const userData = snapshot.data() || {};
-          const tier = userData.subscriptionTier || 'free';
-          const credits = userData.credits ?? 5;
-          const email = userData.email || '';
-          const isAdminEmail = email === 'santwomusic@gmail.com' || email === 'brisasofc@gmail.com' || email === 'admin@pixelflow.ai';
-          let role = userData.role || 'user';
+        await userRef.update({ role: 'admin' });
+      } catch (upgErr) {
+        console.error("Erro ao atualizar papel do admin no backend:", upgErr);
+      }
+    }
 
-          if (isAdminEmail && role !== 'admin') {
-            role = 'admin';
-            try {
-              await userRef.update({ role: 'admin' });
-            } catch (upgErr) {
-              console.error("Erro ao atualizar papel do admin no backend:", upgErr);
-            }
-          }
+    userTier = role === 'admin' ? 'business' : tier;
+    if (role === 'admin') {
+      isAdmin = true;
+    }
 
-          userTier = role === 'admin' ? 'business' : tier;
-          
-          if (role === 'admin') {
-            isAdmin = true;
-          }
-          
-          if (!isAdmin) {
-            if (credits <= 0) {
-              if (tier === 'free') {
-                return res.status(403).json({
-                  error: 'Você atingiu o limite de 5 créditos do plano Grátis. Inscreva-se em um plano para continuar.'
-                });
-              } else {
-                return res.status(403).json({
-                  error: 'Você esgotou os créditos da sua assinatura. Renove ou adquira mais créditos para continuar.'
-                });
-              }
-            }
-          }
+    if (!isAdmin) {
+      if (credits <= 0) {
+        if (tier === 'free') {
+          return res.status(403).json({
+            error: 'Você atingiu o limite de 5 créditos do plano Grátis. Inscreva-se em um plano para continuar.'
+          });
+        } else {
+          return res.status(403).json({
+            error: 'Você esgotou os créditos da sua assinatura. Renove ou adquira mais créditos para continuar.'
+          });
         }
-      } catch (dbError) {
-        console.warn("Could not retrieve user details in production backend, continuing with default profile balances:", dbError);
       }
     }
 
@@ -370,17 +381,33 @@ const handleProcessImage = async (req: express.Request, res: express.Response): 
       downloadUrl = `data:${outputFormat};base64,${processedBuffer.toString('base64')}`;
     }
 
-    // Sync database
-    if (userId && userId !== 'anonymous' && db) {
-      try {
-        const userRef = db.collection('users').doc(userId);
+    // Sync database atomically via transaction
+    try {
+      await db.runTransaction(async (transaction) => {
+        const freshSnapshot = await transaction.get(userRef);
+        if (!freshSnapshot.exists) {
+          throw new Error('Perfil de usuário não encontrado durante a transação de débito.');
+        }
+        const freshUserData = freshSnapshot.data() || {};
+        const freshCredits = freshUserData.credits ?? 5;
+
+        if (!isAdmin && freshCredits <= 0) {
+          throw new Error('Créditos insuficientes confirmados durante a transação.');
+        }
+
+        const newCredits = isAdmin ? freshCredits : freshCredits - 1;
+        const newImagesProcessed = (freshUserData.imagesProcessed || 0) + 1;
+
+        // 1. Deduct credits
+        transaction.update(userRef, {
+          credits: newCredits,
+          imagesProcessed: newImagesProcessed,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+
+        // 2. Set processed image metadata
         const imgRef = db.collection('processed_images').doc(imgId);
-        const logId = 'log_' + Math.random().toString(36).substring(2, 11);
-        const logRef = db.collection('usage_logs').doc(logId);
-
-        const creditsDeducted = isAdmin ? 0 : 1;
-
-        await imgRef.set({
+        transaction.set(imgRef, {
           id: imgId,
           userId,
           originalName: originalname,
@@ -397,22 +424,23 @@ const handleProcessImage = async (req: express.Request, res: express.Response): 
           createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
 
-        await userRef.update({
-          credits: isAdmin ? admin.firestore.FieldValue.increment(0) : admin.firestore.FieldValue.increment(-1),
-          imagesProcessed: admin.firestore.FieldValue.increment(1),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp()
-        });
-
-        await logRef.set({
+        // 3. Set usage logs
+        const logId = 'log_' + Math.random().toString(36).substring(2, 11);
+        const logRef = db.collection('usage_logs').doc(logId);
+        const creditsDeducted = isAdmin ? 0 : 1;
+        transaction.set(logRef, {
           id: logId,
           userId,
           action: `Otimizou foto: ${originalname} via Render Production Server.`,
           creditsDeducted,
           createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
-      } catch (dbError) {
-        console.error("Firestore balance decrement sync error:", dbError);
-      }
+      });
+    } catch (dbError: any) {
+      console.error("Erro na transação de débito de créditos do Firestore:", dbError);
+      return res.status(500).json({
+        error: 'Erro ao debitar seus créditos. A imagem não pôde ser salva com segurança.'
+      });
     }
 
     return res.json({

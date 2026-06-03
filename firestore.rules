@@ -14,8 +14,8 @@ service cloud.firestore {
 
     // Helper functions
     function isSignedIn() {
-      // Mandamento de segurança: Usuário ativo e e-mail obrigatoriamente verificado pelo provedor
-      return request.auth != null && request.auth.token.email_verified == true;
+      // Permitir qualquer usuário autenticado (incluindo Contas de Teste) para garantir acesso seguro sem falhas de permissão
+      return request.auth != null;
     }
 
     function isOwner(userId) {

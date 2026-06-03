@@ -74,50 +74,72 @@ export async function POST(req: NextRequest) {
     // Check credits before expensive processing
     let isAdmin = false;
     let userTier = 'free';
-    if (userId && userId !== 'anonymous' && db) {
-      try {
-        const userRef = db.collection('users').doc(userId);
-        const snapshot = await userRef.get();
-        if (snapshot.exists) {
-          const userData = snapshot.data() || {};
-          const tier = userData.subscriptionTier || 'free';
-          const credits = userData.credits ?? 5;
-          const email = userData.email || '';
-          const isAdminEmail = email === 'santwomusic@gmail.com' || email === 'brisasofc@gmail.com' || email === 'admin@pixelflow.ai';
-          let role = userData.role || 'user';
+    if (!db) {
+      return NextResponse.json(
+        { error: 'Falha crítica: Banco de dados indisponível.' },
+        { status: 500 }
+      );
+    }
+    if (!userId || userId === 'anonymous') {
+      return NextResponse.json(
+        { error: 'Usuário não autenticado. Por favor, faça login.' },
+        { status: 401 }
+      );
+    }
 
-          if (isAdminEmail && role !== 'admin') {
-            role = 'admin';
-            try {
-              await userRef.update({ role: 'admin' });
-            } catch (upgErr) {
-              console.error("Erro ao atualizar papel do admin no endpoint de process-image:", upgErr);
-            }
-          }
-          
-          userTier = tier;
-          if (role === 'admin') {
-            isAdmin = true;
-          }
-          
-          if (!isAdmin) {
-            if (credits <= 0) {
-              if (tier === 'free') {
-                return NextResponse.json(
-                  { error: 'Você atingiu o limite de 5 créditos do plano Grátis. Inscreva-se em um plano para continuar.' },
-                  { status: 403 }
-                );
-              } else {
-                return NextResponse.json(
-                  { error: 'Você esgotou os créditos da sua assinatura. Renove ou adquira mais créditos para continuar.' },
-                  { status: 403 }
-                );
-              }
-            }
-          }
+    const userRef = db.collection('users').doc(userId);
+    let snapshot;
+    try {
+      snapshot = await userRef.get();
+    } catch (dbError: any) {
+      console.error("Erro ao carregar dados do usuário no banco de dados:", dbError);
+      return NextResponse.json(
+        { error: 'Erro ao verificar créditos no banco de dados. Por favor, tente novamente.' },
+        { status: 500 }
+      );
+    }
+
+    if (!snapshot.exists) {
+      return NextResponse.json(
+        { error: 'Perfil de usuário não encontrado no banco de dados.' },
+        { status: 404 }
+      );
+    }
+
+    const userData = snapshot.data() || {};
+    const tier = userData.subscriptionTier || 'free';
+    const credits = userData.credits ?? 5;
+    const email = userData.email || '';
+    const isAdminEmail = email === 'santwomusic@gmail.com' || email === 'brisasofc@gmail.com' || email === 'admin@pixelflow.ai';
+    let role = userData.role || 'user';
+
+    if (isAdminEmail && role !== 'admin') {
+      role = 'admin';
+      try {
+        await userRef.update({ role: 'admin' });
+      } catch (upgErr) {
+        console.error("Erro ao atualizar papel do admin no endpoint de process-image:", upgErr);
+      }
+    }
+    
+    userTier = role === 'admin' ? 'business' : tier;
+    if (role === 'admin') {
+      isAdmin = true;
+    }
+    
+    if (!isAdmin) {
+      if (credits <= 0) {
+        if (tier === 'free') {
+          return NextResponse.json(
+            { error: 'Você atingiu o limite de 5 créditos do plano Grátis. Inscreva-se em um plano para continuar.' },
+            { status: 403 }
+          );
+        } else {
+          return NextResponse.json(
+            { error: 'Você esgotou os créditos da sua assinatura. Renove ou adquira mais créditos para continuar.' },
+            { status: 403 }
+          );
         }
-      } catch (dbError) {
-        console.warn("Could not check credits from db prior to processing, continuing:", dbError);
       }
     }
 
@@ -252,18 +274,33 @@ export async function POST(req: NextRequest) {
       downloadUrl = `data:${outputFormat};base64,${processedBuffer.toString('base64')}`;
     }
 
-    // 7. Sync transactional logs and account balances to Firestore
-    if (userId && userId !== 'anonymous' && db) {
-      try {
-        const userRef = db.collection('users').doc(userId);
+    // 7. Sync transactional logs and account balances to Firestore atomically via transaction
+    try {
+      await db.runTransaction(async (transaction) => {
+        const freshSnapshot = await transaction.get(userRef);
+        if (!freshSnapshot.exists) {
+          throw new Error('Perfil de usuário não encontrado durante a transação de débito.');
+        }
+        const freshUserData = freshSnapshot.data() || {};
+        const freshCredits = freshUserData.credits ?? 5;
+
+        if (!isAdmin && freshCredits <= 0) {
+          throw new Error('Créditos insuficientes confirmados durante a transação.');
+        }
+
+        const newCredits = isAdmin ? freshCredits : freshCredits - 1;
+        const newImagesProcessed = (freshUserData.imagesProcessed || 0) + 1;
+
+        // 1. Deduct credits
+        transaction.update(userRef, {
+          credits: newCredits,
+          imagesProcessed: newImagesProcessed,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+
+        // 2. Set processed image metadata
         const imgRef = db.collection('processed_images').doc(imgId);
-        const logId = 'log_' + Math.random().toString(36).substring(2, 11);
-        const logRef = db.collection('usage_logs').doc(logId);
-
-        // Account balance credit change calculations (deduct 1 if not admin)
-        const creditsDeducted = isAdmin ? 0 : 1;
-
-        await imgRef.set({
+        transaction.set(imgRef, {
           id: imgId,
           userId,
           originalName,
@@ -280,23 +317,24 @@ export async function POST(req: NextRequest) {
           createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
 
-        // Update the user's credits and total imagesProcessed count
-        await userRef.update({
-          credits: isAdmin ? admin.firestore.FieldValue.increment(0) : admin.firestore.FieldValue.increment(-1),
-          imagesProcessed: admin.firestore.FieldValue.increment(1),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp()
-        });
-
-        await logRef.set({
+        // 3. Set usage logs
+        const logId = 'log_' + Math.random().toString(36).substring(2, 11);
+        const logRef = db.collection('usage_logs').doc(logId);
+        const creditsDeducted = isAdmin ? 0 : 1;
+        transaction.set(logRef, {
           id: logId,
           userId,
           action: `Otimizou foto: ${originalName} para canais de altíssimo engajamento visual.`,
           creditsDeducted,
           createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
-      } catch (dbError) {
-        console.error("Firestore database accounting exception caught:", dbError);
-      }
+      });
+    } catch (dbError: any) {
+      console.error("Erro na transação de débito de créditos do Firestore no Next.js Route:", dbError);
+      return NextResponse.json(
+        { error: 'Erro ao debitar seus créditos. A imagem não pôde ser salva com segurança.' },
+        { status: 500 }
+      );
     }
 
     return NextResponse.json({
