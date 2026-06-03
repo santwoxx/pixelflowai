@@ -34,6 +34,7 @@ app.use(cors({
 }));
 
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // In-memory rate limiting dictionary
 const rateLimitMap = new Map<string, { count: number; resetTime: number }>();
@@ -534,13 +535,21 @@ app.post('/api/mercadopago/verify', async (req, res): Promise<any> => {
 // Mercado Pago Automatic Webhook Listener
 const handleMercadoPagoWebhook = async (req: express.Request, res: express.Response): Promise<any> => {
   try {
-    const id = req.body.data?.id || req.body.id || req.query.id || req.query['data.id'];
-    const type = req.body.type || req.body.action || req.query.topic || req.query.type;
+    console.log('--- NOVO EVENTO MERCADO PAGO ---');
+    console.log(`MÉTODO: ${req.method}`);
+    console.log(`URL: ${req.originalUrl}`);
+    console.log(`BODY RECEBIDO:`, JSON.stringify(req.body, null, 2));
+    console.log(`QUERY RECEBIDA:`, JSON.stringify(req.query, null, 2));
+    console.log('--------------------------------');
 
-    console.log(`[Express Webhook Received] ID: ${id}, Type: ${type}`);
+    const id = req.body?.data?.id || req.body?.id || req.query?.id || req.query?.['data.id'];
+    const type = req.body?.type || req.body?.action || req.query?.topic || req.query?.type;
+
+    console.log(`[Express Webhook Extract] ID extraído: ${id}, Tipo extraído: ${type}`);
 
     if (!id || !type) {
-      return res.json({ success: true, message: "Webhook ping received, but no valid resource ID or type found." });
+      console.log(`[Express Webhook] Ignorando notificação sem ID ou Tipo. Retornando 200 OK.`);
+      return res.status(200).json({ success: true, message: "Webhook ping received, but no valid resource ID or type found." });
     }
 
     if (!db) {
