@@ -135,16 +135,7 @@ export default function Home() {
         <section className="relative overflow-hidden pt-16 pb-24 md:pt-24 md:pb-36 lg:pt-36">
           <div className="mx-auto max-w-7xl px-6 lg:px-8 text-center relative z-10">
             
-            {/* Tagline Badge */}
-            <motion.div
-              initial={{ opacity: 0, y: -20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5 }}
-              className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-slate-950 border border-slate-900 text-[10px] font-black tracking-widest text-amber-400 mb-8 uppercase backdrop-blur-md"
-            >
-              <span className="flex h-2 w-2 rounded-full bg-amber-400 animate-pulse"></span>
-              Lançamento SaaS Oficial
-            </motion.div>
+
 
             {/* Title */}
             <motion.h1
