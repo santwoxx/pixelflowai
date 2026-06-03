@@ -5,9 +5,7 @@ import sharp from 'sharp';
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
-import { db, storage } from './lib/firebase-server.js';
-import { doc, getDoc, setDoc, serverTimestamp, updateDoc, increment } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { db, storage, admin, firebaseConfig } from './lib/firebase-server.js';
 import { MERCADOPAGO_ACCESS_TOKEN, getMercadoPagoHeaders } from './lib/mercadopago.js';
 
 dotenv.config();
@@ -113,10 +111,10 @@ const handleProcessImage = async (req: express.Request, res: express.Response): 
     let userTier = 'free';
     if (userId && userId !== 'anonymous' && db) {
       try {
-        const userRef = doc(db, 'users', userId);
-        const snapshot = await getDoc(userRef);
-        if (snapshot.exists()) {
-          const userData = snapshot.data();
+        const userRef = db.collection('users').doc(userId);
+        const snapshot = await userRef.get();
+        if (snapshot.exists) {
+          const userData = snapshot.data() || {};
           const tier = userData.subscriptionTier || 'free';
           const credits = userData.credits ?? 5;
           const email = userData.email || '';
@@ -126,7 +124,7 @@ const handleProcessImage = async (req: express.Request, res: express.Response): 
           if (isAdminEmail && role !== 'admin') {
             role = 'admin';
             try {
-              await updateDoc(userRef, { role: 'admin' });
+              await userRef.update({ role: 'admin' });
             } catch (upgErr) {
               console.error("Erro ao atualizar papel do admin no backend:", upgErr);
             }
@@ -352,11 +350,18 @@ const handleProcessImage = async (req: express.Request, res: express.Response): 
     // Upload processed assets securely
     try {
       const storagePath = `processed_images/${userId}/${imgId}-${processedName}`;
-      const storageRef = ref(storage, storagePath);
-      const snapshot = await uploadBytes(storageRef, processedBuffer, {
-        contentType: outputFormat
+      const bucket = storage.bucket(firebaseConfig.storageBucket || "pixelflow-ai-d62d8.firebasestorage.app");
+      const file = bucket.file(storagePath);
+      await file.save(processedBuffer, {
+        metadata: {
+          contentType: outputFormat,
+          metadata: {
+            firebaseStorageDownloadTokens: imgId
+          }
+        }
       });
-      downloadUrl = await getDownloadURL(snapshot.ref);
+      const encodedPath = encodeURIComponent(storagePath);
+      downloadUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodedPath}?alt=media&token=${imgId}`;
     } catch (storageError) {
       console.warn("Storage upload exception, using safe serverless Base64 encoded Data URL: ", storageError);
       
@@ -368,14 +373,14 @@ const handleProcessImage = async (req: express.Request, res: express.Response): 
     // Sync database
     if (userId && userId !== 'anonymous' && db) {
       try {
-        const userRef = doc(db, 'users', userId);
-        const imgRef = doc(db, 'processed_images', imgId);
+        const userRef = db.collection('users').doc(userId);
+        const imgRef = db.collection('processed_images').doc(imgId);
         const logId = 'log_' + Math.random().toString(36).substring(2, 11);
-        const logRef = doc(db, 'usage_logs', logId);
+        const logRef = db.collection('usage_logs').doc(logId);
 
         const creditsDeducted = isAdmin ? 0 : 1;
 
-        await setDoc(imgRef, {
+        await imgRef.set({
           id: imgId,
           userId,
           originalName: originalname,
@@ -389,21 +394,21 @@ const handleProcessImage = async (req: express.Request, res: express.Response): 
           antiAiPerturbation,
           compressionRate,
           downloadUrl,
-          createdAt: serverTimestamp()
+          createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
 
-        await updateDoc(userRef, {
-          credits: isAdmin ? increment(0) : increment(-1),
-          imagesProcessed: increment(1),
-          updatedAt: serverTimestamp()
+        await userRef.update({
+          credits: isAdmin ? admin.firestore.FieldValue.increment(0) : admin.firestore.FieldValue.increment(-1),
+          imagesProcessed: admin.firestore.FieldValue.increment(1),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
         });
 
-        await setDoc(logRef, {
+        await logRef.set({
           id: logId,
           userId,
           action: `Otimizou foto: ${originalname} via Render Production Server.`,
           creditsDeducted,
-          createdAt: serverTimestamp()
+          createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
       } catch (dbError) {
         console.error("Firestore balance decrement sync error:", dbError);
@@ -516,13 +521,13 @@ app.post('/api/mercadopago/verify', async (req, res): Promise<any> => {
       return res.status(500).json({ error: "Banco de dados indisponível." });
     }
 
-    const userRef = doc(db, "users", externalRefUserId);
+    const userRef = db.collection("users").doc(externalRefUserId);
     const subId = "sub_mp_" + Math.random().toString(36).substring(2, 11);
-    const subRef = doc(db, "subscriptions", subId);
+    const subRef = db.collection("subscriptions").doc(subId);
 
     const creditsToInject = tier === "pro" ? 1200 : 5000;
 
-    await setDoc(subRef, {
+    await subRef.set({
       userId: externalRefUserId,
       stripeSubscriptionId: paymentId || "mp_payment_mock",
       tier: tier,
@@ -530,10 +535,10 @@ app.post('/api/mercadopago/verify', async (req, res): Promise<any> => {
       createdAt: new Date().toISOString()
     });
 
-    await updateDoc(userRef, {
+    await userRef.update({
       subscriptionTier: tier,
-      credits: increment(creditsToInject),
-      updatedAt: serverTimestamp()
+      credits: admin.firestore.FieldValue.increment(creditsToInject),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
     console.log(`[Production Render Gateway] Approved and upgraded ${externalRefUserId} to ${tier}.`);
@@ -562,11 +567,11 @@ const handleMercadoPagoWebhook = async (req: express.Request, res: express.Respo
     }
 
     const webhookId = `mp_webhook_${id}`;
-    const processedRef = doc(db, "processed_webhooks", webhookId);
+    const processedRef = db.collection("processed_webhooks").doc(webhookId);
     
     try {
-      const processedSnap = await getDoc(processedRef);
-      if (processedSnap.exists()) {
+      const processedSnap = await processedRef.get();
+      if (processedSnap.exists) {
         console.log(`[Express Webhook] Webhook ID ${webhookId} has already been processed.`);
         return res.json({ success: true, duplicated: true, message: "Webhook already processed." });
       }
@@ -603,17 +608,17 @@ const handleMercadoPagoWebhook = async (req: express.Request, res: express.Respo
           } else if (status === "cancelled" || status === "paused") {
             // Handle cancellation
             if (externalRefUserId) {
-              const userRef = doc(db, "users", externalRefUserId);
-              await updateDoc(userRef, {
+              const userRef = db.collection("users").doc(externalRefUserId);
+              await userRef.update({
                 plan: "FREE",
                 subscriptionTier: "free",
                 subscriptionStatus: "cancelled",
                 subscriptionId: String(id),
                 credits: 0,
-                updatedAt: serverTimestamp()
+                updatedAt: admin.firestore.FieldValue.serverTimestamp()
               });
 
-              await setDoc(processedRef, {
+              await processedRef.set({
                 processedAt: new Date().toISOString(),
                 id: String(id),
                 type,
@@ -655,16 +660,16 @@ const handleMercadoPagoWebhook = async (req: express.Request, res: express.Respo
           } else if (status === "refunded" || status === "charged_back" || status === "cancelled") {
             externalRefUserId = paymentData.external_reference || "";
             if (externalRefUserId) {
-              const userRef = doc(db, "users", externalRefUserId);
-              await updateDoc(userRef, {
+              const userRef = db.collection("users").doc(externalRefUserId);
+              await userRef.update({
                 plan: "FREE",
                 subscriptionTier: "free",
                 subscriptionStatus: "cancelled",
                 credits: 0,
-                updatedAt: serverTimestamp()
+                updatedAt: admin.firestore.FieldValue.serverTimestamp()
               });
 
-              await setDoc(processedRef, {
+              await processedRef.set({
                 processedAt: new Date().toISOString(),
                 id: String(id),
                 type,
@@ -687,13 +692,13 @@ const handleMercadoPagoWebhook = async (req: express.Request, res: express.Respo
       return res.json({ success: true, message: "Webhook ignored or verification incomplete." });
     }
 
-    const userRef = doc(db, "users", externalRefUserId);
+    const userRef = db.collection("users").doc(externalRefUserId);
     const subId = `sub_mp_auto_${id}`;
-    const subRef = doc(db, "subscriptions", subId);
+    const subRef = db.collection("subscriptions").doc(subId);
 
     const mappedPlan = tier === "business" ? "CORPORATIVO" : "PROFISSIONAL";
 
-    await setDoc(subRef, {
+    await subRef.set({
       userId: externalRefUserId,
       stripeSubscriptionId: String(id),
       tier: tier,
@@ -702,17 +707,17 @@ const handleMercadoPagoWebhook = async (req: express.Request, res: express.Respo
       createdAt: new Date().toISOString()
     });
 
-    await updateDoc(userRef, {
+    await userRef.update({
       plan: mappedPlan,
       subscriptionTier: tier,
       subscriptionStatus: "active",
       subscriptionId: String(id),
       credits: 999999,
-      updatedAt: serverTimestamp()
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
     // Save webhook as processed successfully
-    await setDoc(processedRef, {
+    await processedRef.set({
       processedAt: new Date().toISOString(),
       id: String(id),
       type,
