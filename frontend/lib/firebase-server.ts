@@ -1,4 +1,5 @@
-import * as admin from 'firebase-admin';
+import admin from 'firebase-admin';
+import { getApps, initializeApp } from 'firebase-admin/app';
 import path from 'path';
 import fs from 'fs';
 
@@ -22,15 +23,15 @@ try {
 
 const projectId = firebaseConfig.projectId || "pixelflow-ai-d62d8";
 
-if (!admin.apps.length) {
+if (!getApps().length) {
   try {
-    admin.initializeApp({
+    initializeApp({
       projectId: projectId,
       credential: admin.credential.applicationDefault()
     });
   } catch (err) {
     console.warn("Could not load Application Default Credentials, initializing admin with projectId only:", err);
-    admin.initializeApp({
+    initializeApp({
       projectId: projectId
     });
   }
