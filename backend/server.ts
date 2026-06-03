@@ -3,9 +3,9 @@ import cors from 'cors';
 import multer from 'multer';
 import sharp from 'sharp';
 import dotenv from 'dotenv';
-import path from 'path';
-import fs from 'fs';
-import { db, storage, admin, firebaseConfig } from './lib/firebase-server.js';
+import { db, storage } from './lib/firebase-server.js';
+import { doc, getDoc, setDoc, serverTimestamp, updateDoc, increment } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { MERCADOPAGO_ACCESS_TOKEN, getMercadoPagoHeaders } from './lib/mercadopago.js';
 
 dotenv.config();
@@ -107,62 +107,34 @@ const handleProcessImage = async (req: express.Request, res: express.Response): 
     const socialNetworkFilter = req.body.socialNetworkFilter || 'none';
 
     // Verify credits in Firestore database
-    let isAdmin = false;
+    let isFreeUser = true;
     let userTier = 'free';
-    if (!db) {
-      return res.status(500).json({ error: 'Falha crítica: Banco de dados indisponível.' });
-    }
-    if (!userId || userId === 'anonymous') {
-      return res.status(401).json({ error: 'Usuário não autenticado. Por favor, faça login.' });
-    }
-
-    const userRef = db.collection('users').doc(userId);
-    let snapshot;
-    try {
-      snapshot = await userRef.get();
-    } catch (dbError: any) {
-      console.error("Erro ao carregar dados do usuário no banco de dados:", dbError);
-      return res.status(500).json({
-        error: 'Erro ao verificar créditos no banco de dados. Por favor, tente novamente.'
-      });
-    }
-
-    if (!snapshot.exists) {
-      return res.status(404).json({ error: 'Perfil de usuário não encontrado no banco de dados.' });
-    }
-
-    const userData = snapshot.data() || {};
-    const tier = userData.subscriptionTier || 'free';
-    const credits = userData.credits ?? 5;
-    const email = userData.email || '';
-    const isAdminEmail = email === 'santwomusic@gmail.com' || email === 'brisasofc@gmail.com' || email === 'admin@pixelflow.ai';
-    let role = userData.role || 'user';
-
-    if (isAdminEmail && role !== 'admin') {
-      role = 'admin';
+    if (userId && userId !== 'anonymous' && db) {
       try {
-        await userRef.update({ role: 'admin' });
-      } catch (upgErr) {
-        console.error("Erro ao atualizar papel do admin no backend:", upgErr);
-      }
-    }
-
-    userTier = role === 'admin' ? 'business' : tier;
-    if (role === 'admin') {
-      isAdmin = true;
-    }
-
-    if (!isAdmin) {
-      if (credits <= 0) {
-        if (tier === 'free') {
-          return res.status(403).json({
-            error: 'Você atingiu o limite de 5 créditos do plano Grátis. Inscreva-se em um plano para continuar.'
-          });
-        } else {
-          return res.status(403).json({
-            error: 'Você esgotou os créditos da sua assinatura. Renove ou adquira mais créditos para continuar.'
-          });
+        const userRef = doc(db, 'users', userId);
+        const snapshot = await getDoc(userRef);
+        if (snapshot.exists()) {
+          const userData = snapshot.data();
+          const tier = userData.subscriptionTier || 'free';
+          const credits = userData.credits ?? 5;
+          const role = userData.role || 'user';
+          userTier = role === 'admin' ? 'business' : tier;
+          
+          if (role === 'admin') {
+            isFreeUser = false;
+          } else if (tier === 'free') {
+            if (credits <= 0) {
+              return res.status(403).json({
+                error: 'Você atingiu o limite de créditos do plano Grátis. Atualize para o Pro para continuar.'
+              });
+            }
+            isFreeUser = true;
+          } else {
+            isFreeUser = false;
+          }
         }
+      } catch (dbError) {
+        console.warn("Could not retrieve user details in production backend, continuing with default profile balances:", dbError);
       }
     }
 
@@ -358,56 +330,32 @@ const handleProcessImage = async (req: express.Request, res: express.Response): 
     
     const processedName = `pixelflow ${getPortugueseDateString()}.${ext}`;
 
-    // Upload processed assets securely
+    // Upload processed assets securely to Firebase Storage (no local filesystem fallback for Vercel compatibility)
     try {
       const storagePath = `processed_images/${userId}/${imgId}-${processedName}`;
-      const bucket = storage.bucket(firebaseConfig.storageBucket || "pixelflow-ai-d62d8.firebasestorage.app");
-      const file = bucket.file(storagePath);
-      await file.save(processedBuffer, {
-        metadata: {
-          contentType: outputFormat,
-          metadata: {
-            firebaseStorageDownloadTokens: imgId
-          }
-        }
+      const storageRef = ref(storage, storagePath);
+      const snapshot = await uploadBytes(storageRef, processedBuffer, {
+        contentType: outputFormat
       });
-      const encodedPath = encodeURIComponent(storagePath);
-      downloadUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodedPath}?alt=media&token=${imgId}`;
+      downloadUrl = await getDownloadURL(snapshot.ref);
     } catch (storageError) {
-      console.warn("Storage upload exception, using safe serverless Base64 encoded Data URL: ", storageError);
-      
-      // Complete backup fallback avoiding disk writes:
-      // Base64 encoded Data URL functions perfectly on all systems and serverless environments.
-      downloadUrl = `data:${outputFormat};base64,${processedBuffer.toString('base64')}`;
+      console.error("Firebase Storage upload failed. Ensure proper Firebase configuration:", storageError);
+      return res.status(500).json({ 
+        error: 'Falha ao armazenar a imagem processada. Verifique a configuração do Firebase Storage.' 
+      });
     }
 
-    // Sync database atomically via transaction
-    try {
-      await db.runTransaction(async (transaction) => {
-        const freshSnapshot = await transaction.get(userRef);
-        if (!freshSnapshot.exists) {
-          throw new Error('Perfil de usuário não encontrado durante a transação de débito.');
-        }
-        const freshUserData = freshSnapshot.data() || {};
-        const freshCredits = freshUserData.credits ?? 5;
+    // Sync database
+    if (userId && userId !== 'anonymous' && db) {
+      try {
+        const userRef = doc(db, 'users', userId);
+        const imgRef = doc(db, 'processed_images', imgId);
+        const logId = 'log_' + Math.random().toString(36).substring(2, 11);
+        const logRef = doc(db, 'usage_logs', logId);
 
-        if (!isAdmin && freshCredits <= 0) {
-          throw new Error('Créditos insuficientes confirmados durante a transação.');
-        }
+        const creditsDeducted = isFreeUser ? 1 : 0;
 
-        const newCredits = isAdmin ? freshCredits : freshCredits - 1;
-        const newImagesProcessed = (freshUserData.imagesProcessed || 0) + 1;
-
-        // 1. Deduct credits
-        transaction.update(userRef, {
-          credits: newCredits,
-          imagesProcessed: newImagesProcessed,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp()
-        });
-
-        // 2. Set processed image metadata
-        const imgRef = db.collection('processed_images').doc(imgId);
-        transaction.set(imgRef, {
+        await setDoc(imgRef, {
           id: imgId,
           userId,
           originalName: originalname,
@@ -421,26 +369,25 @@ const handleProcessImage = async (req: express.Request, res: express.Response): 
           antiAiPerturbation,
           compressionRate,
           downloadUrl,
-          createdAt: admin.firestore.FieldValue.serverTimestamp()
+          createdAt: serverTimestamp()
         });
 
-        // 3. Set usage logs
-        const logId = 'log_' + Math.random().toString(36).substring(2, 11);
-        const logRef = db.collection('usage_logs').doc(logId);
-        const creditsDeducted = isAdmin ? 0 : 1;
-        transaction.set(logRef, {
+        await updateDoc(userRef, {
+          credits: isFreeUser ? increment(-1) : increment(0),
+          imagesProcessed: increment(1),
+          updatedAt: serverTimestamp()
+        });
+
+        await setDoc(logRef, {
           id: logId,
           userId,
           action: `Otimizou foto: ${originalname} via Render Production Server.`,
           creditsDeducted,
-          createdAt: admin.firestore.FieldValue.serverTimestamp()
+          createdAt: serverTimestamp()
         });
-      });
-    } catch (dbError: any) {
-      console.error("Erro na transação de débito de créditos do Firestore:", dbError);
-      return res.status(500).json({
-        error: 'Erro ao debitar seus créditos. A imagem não pôde ser salva com segurança.'
-      });
+      } catch (dbError) {
+        console.error("Firestore balance decrement sync error:", dbError);
+      }
     }
 
     return res.json({
@@ -549,13 +496,13 @@ app.post('/api/mercadopago/verify', async (req, res): Promise<any> => {
       return res.status(500).json({ error: "Banco de dados indisponível." });
     }
 
-    const userRef = db.collection("users").doc(externalRefUserId);
+    const userRef = doc(db, "users", externalRefUserId);
     const subId = "sub_mp_" + Math.random().toString(36).substring(2, 11);
-    const subRef = db.collection("subscriptions").doc(subId);
+    const subRef = doc(db, "subscriptions", subId);
 
     const creditsToInject = tier === "pro" ? 1200 : 5000;
 
-    await subRef.set({
+    await setDoc(subRef, {
       userId: externalRefUserId,
       stripeSubscriptionId: paymentId || "mp_payment_mock",
       tier: tier,
@@ -563,10 +510,10 @@ app.post('/api/mercadopago/verify', async (req, res): Promise<any> => {
       createdAt: new Date().toISOString()
     });
 
-    await userRef.update({
+    await updateDoc(userRef, {
       subscriptionTier: tier,
-      credits: admin.firestore.FieldValue.increment(creditsToInject),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      credits: increment(creditsToInject),
+      updatedAt: serverTimestamp()
     });
 
     console.log(`[Production Render Gateway] Approved and upgraded ${externalRefUserId} to ${tier}.`);
@@ -595,11 +542,11 @@ const handleMercadoPagoWebhook = async (req: express.Request, res: express.Respo
     }
 
     const webhookId = `mp_webhook_${id}`;
-    const processedRef = db.collection("processed_webhooks").doc(webhookId);
+    const processedRef = doc(db, "processed_webhooks", webhookId);
     
     try {
-      const processedSnap = await processedRef.get();
-      if (processedSnap.exists) {
+      const processedSnap = await getDoc(processedRef);
+      if (processedSnap.exists()) {
         console.log(`[Express Webhook] Webhook ID ${webhookId} has already been processed.`);
         return res.json({ success: true, duplicated: true, message: "Webhook already processed." });
       }
@@ -636,17 +583,17 @@ const handleMercadoPagoWebhook = async (req: express.Request, res: express.Respo
           } else if (status === "cancelled" || status === "paused") {
             // Handle cancellation
             if (externalRefUserId) {
-              const userRef = db.collection("users").doc(externalRefUserId);
-              await userRef.update({
+              const userRef = doc(db, "users", externalRefUserId);
+              await updateDoc(userRef, {
                 plan: "FREE",
                 subscriptionTier: "free",
                 subscriptionStatus: "cancelled",
                 subscriptionId: String(id),
                 credits: 0,
-                updatedAt: admin.firestore.FieldValue.serverTimestamp()
+                updatedAt: serverTimestamp()
               });
 
-              await processedRef.set({
+              await setDoc(processedRef, {
                 processedAt: new Date().toISOString(),
                 id: String(id),
                 type,
@@ -688,16 +635,16 @@ const handleMercadoPagoWebhook = async (req: express.Request, res: express.Respo
           } else if (status === "refunded" || status === "charged_back" || status === "cancelled") {
             externalRefUserId = paymentData.external_reference || "";
             if (externalRefUserId) {
-              const userRef = db.collection("users").doc(externalRefUserId);
-              await userRef.update({
+              const userRef = doc(db, "users", externalRefUserId);
+              await updateDoc(userRef, {
                 plan: "FREE",
                 subscriptionTier: "free",
                 subscriptionStatus: "cancelled",
                 credits: 0,
-                updatedAt: admin.firestore.FieldValue.serverTimestamp()
+                updatedAt: serverTimestamp()
               });
 
-              await processedRef.set({
+              await setDoc(processedRef, {
                 processedAt: new Date().toISOString(),
                 id: String(id),
                 type,
@@ -720,13 +667,13 @@ const handleMercadoPagoWebhook = async (req: express.Request, res: express.Respo
       return res.json({ success: true, message: "Webhook ignored or verification incomplete." });
     }
 
-    const userRef = db.collection("users").doc(externalRefUserId);
+    const userRef = doc(db, "users", externalRefUserId);
     const subId = `sub_mp_auto_${id}`;
-    const subRef = db.collection("subscriptions").doc(subId);
+    const subRef = doc(db, "subscriptions", subId);
 
     const mappedPlan = tier === "business" ? "CORPORATIVO" : "PROFISSIONAL";
 
-    await subRef.set({
+    await setDoc(subRef, {
       userId: externalRefUserId,
       stripeSubscriptionId: String(id),
       tier: tier,
@@ -735,17 +682,17 @@ const handleMercadoPagoWebhook = async (req: express.Request, res: express.Respo
       createdAt: new Date().toISOString()
     });
 
-    await userRef.update({
+    await updateDoc(userRef, {
       plan: mappedPlan,
       subscriptionTier: tier,
       subscriptionStatus: "active",
       subscriptionId: String(id),
       credits: 999999,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      updatedAt: serverTimestamp()
     });
 
     // Save webhook as processed successfully
-    await processedRef.set({
+    await setDoc(processedRef, {
       processedAt: new Date().toISOString(),
       id: String(id),
       type,

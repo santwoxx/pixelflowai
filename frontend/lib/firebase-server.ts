@@ -25,10 +25,22 @@ const projectId = firebaseConfig.projectId || "pixelflow-ai-d62d8";
 
 if (!getApps().length) {
   try {
-    initializeApp({
-      projectId: projectId,
-      credential: admin.credential.applicationDefault()
-    });
+    if (process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL) {
+      initializeApp({
+        projectId: projectId,
+        credential: admin.credential.cert({
+          projectId: projectId,
+          clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+          // Replace escaped newlines if any
+          privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
+        })
+      });
+    } else {
+      initializeApp({
+        projectId: projectId,
+        credential: admin.credential.applicationDefault()
+      });
+    }
   } catch (err) {
     console.warn("Could not load Application Default Credentials, initializing admin with projectId only:", err);
     initializeApp({
