@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getStripe } from '@/lib/stripe';
-import { db } from '@/lib/firebase-server';
-import { doc, setDoc, updateDoc, increment, serverTimestamp } from 'firebase/firestore';
+import { db, admin } from '@/lib/firebase-server';
 
 export async function POST(req: NextRequest) {
   const stripe = getStripe();
@@ -34,11 +33,11 @@ export async function POST(req: NextRequest) {
       const userId = session.client_reference_id;
       
       if (userId && db) {
-        const userRef = doc(db, 'users', userId);
+        const userRef = db.collection('users').doc(userId);
         const subId = 'sub_' + Math.random().toString(36).substring(2, 11);
-        const subRef = doc(db, 'subscriptions', subId);
+        const subRef = db.collection('subscriptions').doc(subId);
 
-        await setDoc(subRef, {
+        await subRef.set({
           userId,
           stripeSubscriptionId: session.subscription?.toString() || 'mock_sub',
           tier: 'pro',
@@ -46,10 +45,10 @@ export async function POST(req: NextRequest) {
           createdAt: new Date().toISOString()
         });
 
-        await updateDoc(userRef, {
+        await userRef.update({
           subscriptionTier: 'pro',
-          credits: increment(1200),
-          updatedAt: serverTimestamp()
+          credits: admin.firestore.FieldValue.increment(1200),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
         });
 
         console.log(`[Stripe Webhook Success] Processed upgrade tier for user ${userId}`);

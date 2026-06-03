@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/firebase-server";
-import { doc, setDoc, updateDoc, increment, serverTimestamp } from "firebase/firestore";
+import { db, admin } from "@/lib/firebase-server";
 import { getMercadoPagoHeaders } from "@/lib/mercadopago";
 
 export async function POST(req: NextRequest) {
@@ -60,14 +59,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Banco de dados indisponível." }, { status: 500 });
     }
 
-    const userRef = doc(db, "users", externalRefUserId);
+    const userRef = db.collection("users").doc(externalRefUserId);
     const subId = "sub_mp_" + Math.random().toString(36).substring(2, 11);
-    const subRef = doc(db, "subscriptions", subId);
+    const subRef = db.collection("subscriptions").doc(subId);
 
     // Give extensive credits based on tier (or regular subscription limits)
     const creditsToInject = tier === "pro" ? 1200 : 5000;
 
-    await setDoc(subRef, {
+    await subRef.set({
       userId: externalRefUserId,
       stripeSubscriptionId: paymentId || "mp_payment_mock",
       tier: tier,
@@ -75,10 +74,10 @@ export async function POST(req: NextRequest) {
       createdAt: new Date().toISOString()
     });
 
-    await updateDoc(userRef, {
+    await userRef.update({
       subscriptionTier: tier,
-      credits: increment(creditsToInject),
-      updatedAt: serverTimestamp()
+      credits: admin.firestore.FieldValue.increment(creditsToInject),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
     console.log(`[Mercado Pago Success] Upgraded user ${externalRefUserId} to ${tier} with ${creditsToInject} credits.`);

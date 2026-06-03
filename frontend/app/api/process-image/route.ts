@@ -2,9 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import path from 'path';
 import fs from 'fs';
 import sharp from 'sharp';
-import { db, storage } from '@/lib/firebase-server';
-import { doc, getDoc, setDoc, serverTimestamp, updateDoc, increment } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { db, storage, admin, firebaseConfig } from '@/lib/firebase-server';
 
 // In-memory rate limiting dictionary
 const rateLimitMap = new Map<string, { count: number; resetTime: number }>();
@@ -78,10 +76,10 @@ export async function POST(req: NextRequest) {
     let userTier = 'free';
     if (userId && userId !== 'anonymous' && db) {
       try {
-        const userRef = doc(db, 'users', userId);
-        const snapshot = await getDoc(userRef);
-        if (snapshot.exists()) {
-          const userData = snapshot.data();
+        const userRef = db.collection('users').doc(userId);
+        const snapshot = await userRef.get();
+        if (snapshot.exists) {
+          const userData = snapshot.data() || {};
           const tier = userData.subscriptionTier || 'free';
           const credits = userData.credits ?? 5;
           const email = userData.email || '';
@@ -91,7 +89,7 @@ export async function POST(req: NextRequest) {
           if (isAdminEmail && role !== 'admin') {
             role = 'admin';
             try {
-              await updateDoc(userRef, { role: 'admin' });
+              await userRef.update({ role: 'admin' });
             } catch (upgErr) {
               console.error("Erro ao atualizar papel do admin no endpoint de process-image:", upgErr);
             }
@@ -231,13 +229,21 @@ export async function POST(req: NextRequest) {
 
     // 6. Double storage layer: attempt Firebase Storage first with graceful local uploads directory fallback
     try {
+      const bucketName = firebaseConfig.storageBucket || 'pixelflow-ai-d62d8.firebasestorage.app';
+      const bucket = storage.bucket(bucketName);
       const storagePath = `processed_images/${userId}/${imgId}-${processedName}`;
-      const storageRef = ref(storage, storagePath);
+      const file = bucket.file(storagePath);
       
-      const snapshot = await uploadBytes(storageRef, processedBuffer, {
-        contentType: outputFormat
+      await file.save(processedBuffer, {
+        metadata: {
+          contentType: outputFormat,
+          metadata: {
+            firebaseStorageDownloadTokens: imgId
+          }
+        }
       });
-      downloadUrl = await getDownloadURL(snapshot.ref);
+      const encodedPath = encodeURIComponent(storagePath);
+      downloadUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodedPath}?alt=media&token=${imgId}`;
     } catch (storageError) {
       console.warn("Firebase Storage fallback applied. Storing base64 encoded data url fallback for serverless safety.", storageError);
       
@@ -249,15 +255,15 @@ export async function POST(req: NextRequest) {
     // 7. Sync transactional logs and account balances to Firestore
     if (userId && userId !== 'anonymous' && db) {
       try {
-        const userRef = doc(db, 'users', userId);
-        const imgRef = doc(db, 'processed_images', imgId);
+        const userRef = db.collection('users').doc(userId);
+        const imgRef = db.collection('processed_images').doc(imgId);
         const logId = 'log_' + Math.random().toString(36).substring(2, 11);
-        const logRef = doc(db, 'usage_logs', logId);
+        const logRef = db.collection('usage_logs').doc(logId);
 
         // Account balance credit change calculations (deduct 1 if not admin)
         const creditsDeducted = isAdmin ? 0 : 1;
 
-        await setDoc(imgRef, {
+        await imgRef.set({
           id: imgId,
           userId,
           originalName,
@@ -271,22 +277,22 @@ export async function POST(req: NextRequest) {
           antiAiPerturbation,
           compressionRate,
           downloadUrl,
-          createdAt: serverTimestamp()
+          createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
 
         // Update the user's credits and total imagesProcessed count
-        await updateDoc(userRef, {
-          credits: isAdmin ? increment(0) : increment(-1),
-          imagesProcessed: increment(1),
-          updatedAt: serverTimestamp()
+        await userRef.update({
+          credits: isAdmin ? admin.firestore.FieldValue.increment(0) : admin.firestore.FieldValue.increment(-1),
+          imagesProcessed: admin.firestore.FieldValue.increment(1),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
         });
 
-        await setDoc(logRef, {
+        await logRef.set({
           id: logId,
           userId,
           action: `Otimizou foto: ${originalName} para canais de altíssimo engajamento visual.`,
           creditsDeducted,
-          createdAt: serverTimestamp()
+          createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
       } catch (dbError) {
         console.error("Firestore database accounting exception caught:", dbError);

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/firebase-server";
-import { doc, getDoc, setDoc, updateDoc, increment, serverTimestamp } from "firebase/firestore";
+import { db, admin } from "@/lib/firebase-server";
 import { getMercadoPagoHeaders } from "@/lib/mercadopago";
 
 export async function POST(req: NextRequest) {
@@ -30,11 +29,11 @@ export async function POST(req: NextRequest) {
     }
 
     const webhookId = `mp_webhook_${id}`;
-    const processedRef = doc(db, "processed_webhooks", webhookId);
+    const processedRef = db.collection("processed_webhooks").doc(webhookId);
     
     try {
-      const processedSnap = await getDoc(processedRef);
-      if (processedSnap.exists()) {
+      const processedSnap = await processedRef.get();
+      if (processedSnap.exists) {
         console.log(`[Mercado Pago Webhook] Webhook ID ${webhookId} has already been processed.`);
         return NextResponse.json({ success: true, duplicated: true, message: "Webhook already processed." });
       }
@@ -74,17 +73,17 @@ export async function POST(req: NextRequest) {
           } else if (status === "cancelled" || status === "paused") {
             // Handle cancellation immediately
             if (externalRefUserId) {
-              const userRef = doc(db, "users", externalRefUserId);
-              await updateDoc(userRef, {
+              const userRef = db.collection("users").doc(externalRefUserId);
+              await userRef.update({
                 plan: "FREE",
                 subscriptionTier: "free",
                 subscriptionStatus: "cancelled",
                 subscriptionId: String(id),
                 credits: 0,
-                updatedAt: serverTimestamp()
+                updatedAt: admin.firestore.FieldValue.serverTimestamp()
               });
               
-              await setDoc(processedRef, {
+              await processedRef.set({
                 processedAt: new Date().toISOString(),
                 id: String(id),
                 type,
@@ -132,16 +131,16 @@ export async function POST(req: NextRequest) {
           } else if (status === "refunded" || status === "charged_back" || status === "cancelled") {
             externalRefUserId = paymentData.external_reference || "";
             if (externalRefUserId) {
-              const userRef = doc(db, "users", externalRefUserId);
-              await updateDoc(userRef, {
+              const userRef = db.collection("users").doc(externalRefUserId);
+              await userRef.update({
                 plan: "FREE",
                 subscriptionTier: "free",
                 subscriptionStatus: "cancelled",
                 credits: 0,
-                updatedAt: serverTimestamp()
+                updatedAt: admin.firestore.FieldValue.serverTimestamp()
               });
 
-              await setDoc(processedRef, {
+              await processedRef.set({
                 processedAt: new Date().toISOString(),
                 id: String(id),
                 type,
@@ -168,13 +167,13 @@ export async function POST(req: NextRequest) {
     }
 
     // 3. Update the client subscription and balance in Firestore
-    const userRef = doc(db, "users", externalRefUserId);
+    const userRef = db.collection("users").doc(externalRefUserId);
     const subId = `sub_mp_auto_${id}`;
-    const subRef = doc(db, "subscriptions", subId);
+    const subRef = db.collection("subscriptions").doc(subId);
 
     const mappedPlan = tier === "business" ? "CORPORATIVO" : "PROFISSIONAL";
 
-    await setDoc(subRef, {
+    await subRef.set({
       userId: externalRefUserId,
       stripeSubscriptionId: String(id),
       tier: tier,
@@ -183,17 +182,17 @@ export async function POST(req: NextRequest) {
       createdAt: new Date().toISOString()
     });
 
-    await updateDoc(userRef, {
+    await userRef.update({
       plan: mappedPlan,
       subscriptionTier: tier,
       subscriptionStatus: "active",
       subscriptionId: String(id),
       credits: 999999, // Unlimited credits for paid subscriptions
-      updatedAt: serverTimestamp()
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
     // Save webhook as processed successfully
-    await setDoc(processedRef, {
+    await processedRef.set({
       processedAt: new Date().toISOString(),
       id: String(id),
       type,
