@@ -144,8 +144,7 @@ export default function DashboardClient({ userProfile, onRefreshProfile, onOpenP
     try {
       const q = query(
         collection(db, 'processed_images'),
-        where('userId', '==', userProfile.uid),
-        orderBy('createdAt', 'desc')
+        where('userId', '==', userProfile.uid)
       );
       const snapshot = await getDocs(q);
       const items: ProcessedImage[] = [];
@@ -165,9 +164,11 @@ export default function DashboardClient({ userProfile, onRefreshProfile, onOpenP
           antiAiPerturbation: data.antiAiPerturbation || false,
           compressionRate: data.compressionRate,
           downloadUrl: data.downloadUrl,
-          createdAt: data.createdAt?.toDate() || new Date()
+          createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : (data.createdAt ? new Date(data.createdAt) : new Date())
         });
       });
+      // Sort client side to bypass/eliminate the need for composite indexes
+      items.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
       setHistory(items);
     } catch (err) {
       console.error("Erro ao carregar histórico: ", err);
@@ -181,17 +182,20 @@ export default function DashboardClient({ userProfile, onRefreshProfile, onOpenP
     try {
       const q = query(
         collection(db, 'presets'),
-        where('userId', '==', userProfile.uid),
-        orderBy('createdAt', 'desc')
+        where('userId', '==', userProfile.uid)
       );
       const snapshot = await getDocs(q);
       const items: any[] = [];
       snapshot.forEach((d) => {
+        const data = d.data();
         items.push({
           id: d.id,
-          ...d.data(),
+          ...data,
+          createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : (data.createdAt ? new Date(data.createdAt) : new Date())
         });
       });
+      // Sort client side to bypass/eliminate the need for composite indexes
+      items.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
       setCustomPresets(items);
     } catch (err) {
       console.error("Erro ao carregar predefinições: ", err);

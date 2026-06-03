@@ -41,8 +41,7 @@ export default function DashboardClient({ userProfile, onRefreshProfile, onOpenP
     try {
       const q = query(
         collection(db, 'processed_images'),
-        where('userId', '==', userProfile.uid),
-        orderBy('createdAt', 'desc')
+        where('userId', '==', userProfile.uid)
       );
       const snapshot = await getDocs(q);
       const items: ProcessedImage[] = [];
@@ -61,9 +60,11 @@ export default function DashboardClient({ userProfile, onRefreshProfile, onOpenP
           grainApplied: data.grainApplied,
           compressionRate: data.compressionRate,
           downloadUrl: data.downloadUrl,
-          createdAt: data.createdAt?.toDate() || new Date()
+          createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : (data.createdAt ? new Date(data.createdAt) : new Date())
         });
       });
+      // Sort client side to bypass/eliminate the need for composite indexes
+      items.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
       setHistory(items);
     } catch (err) {
       console.error("Erro ao carregar histórico: ", err);

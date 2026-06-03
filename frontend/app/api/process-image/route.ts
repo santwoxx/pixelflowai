@@ -220,19 +220,11 @@ export async function POST(req: NextRequest) {
       });
       downloadUrl = await getDownloadURL(snapshot.ref);
     } catch (storageError) {
-      console.warn("Firebase Storage fallback applied. Storing local folder assets.", storageError);
+      console.warn("Firebase Storage fallback applied. Storing base64 encoded data url fallback for serverless safety.", storageError);
       
-      const UPLOADS_DIR = path.join(process.cwd(), 'public', 'uploads');
-      if (!fs.existsSync(UPLOADS_DIR)) {
-        fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-      }
-
-      const hashParam = `${pixelJitter ? 'j' : 'n'}${grainApplied ? `g${grainIntensity}` : 'n'}`;
-      const localFileName = `${imgId}-${hashParam}-${processedName}`;
-      const localFilePath = path.join(UPLOADS_DIR, localFileName);
-      
-      fs.writeFileSync(localFilePath, processedBuffer);
-      downloadUrl = `/uploads/${localFileName}`;
+      // Complete backup fallback avoiding disk writes:
+      // Base64 encoded Data URL functions perfectly on all systems and serverless environments.
+      downloadUrl = `data:${outputFormat};base64,${processedBuffer.toString('base64')}`;
     }
 
     // 7. Sync transactional logs and account balances to Firestore

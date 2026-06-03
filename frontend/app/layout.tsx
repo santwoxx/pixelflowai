@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import './globals.css';
-import { ClientWrapper } from '@/lib/client-wrapper';
+import { AuthProvider } from '@/lib/auth-context';
 
 export const metadata: Metadata = {
   title: 'PixelFlow AI | Otimizador Profissional de Metadados e Aparência Visual',
@@ -29,9 +29,9 @@ export default function RootLayout({
   return (
     <html lang="pt-BR" className="scroll-smooth">
       <body className="min-h-screen bg-[#020617] text-slate-50 antialiased selection:bg-amber-500/20 selection:text-amber-300">
-        <ClientWrapper>
+        <AuthProvider>
           {children}
-        </ClientWrapper>
+        </AuthProvider>
       </body>
     </html>
   );
