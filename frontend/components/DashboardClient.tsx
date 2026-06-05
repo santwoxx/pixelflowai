@@ -293,6 +293,9 @@ export default function DashboardClient({ userProfile, onRefreshProfile, onOpenP
   useEffect(() => {
     fetchHistory();
     fetchPresets();
+    // Warm-up ping to Render backend to minimize cold-start delay on first image process
+    const apiBase = process.env.NEXT_PUBLIC_API_URL || 'https://pixelflowai.onrender.com';
+    fetch(`${apiBase}/health`, { method: 'GET' }).catch(() => {/* silent warm-up */});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userProfile.uid]);
 
@@ -1300,6 +1303,21 @@ Livre para distribuição pública e anonimização em canais sociais.
                 >
                   <Download className="h-4 w-4" />
                   <span>Baixar Arquivo Purificado</span>
+                </button>
+
+                {/* Reset for new image */}
+                <button
+                  onClick={() => {
+                    setImage(null);
+                    setImagePreview(null);
+                    setProcessedUrl(null);
+                    setFileDetails(null);
+                    if (fileInputRef.current) fileInputRef.current.value = '';
+                  }}
+                  className="w-full h-10 flex items-center justify-center gap-2 rounded-xl border border-slate-800 bg-slate-900/60 hover:bg-slate-800 text-slate-300 text-xs font-semibold uppercase tracking-wider transition-all cursor-pointer mt-2"
+                >
+                  <Upload className="h-3.5 w-3.5" />
+                  <span>Processar Nova Imagem</span>
                 </button>
               </div>
             ) : (

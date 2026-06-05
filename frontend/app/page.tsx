@@ -409,7 +409,7 @@ export default function Home() {
                           : 'bg-slate-805 hover:bg-slate-700 text-slate-200'
                       }`}
                     >
-                      {plan.id === 'free' ? 'Iniciar Gratuitamente' : 'Assinar Plano Profissional'}
+                      {plan.id === 'free' ? 'Iniciar Gratuitamente' : plan.id === 'pro' ? 'Assinar Plano Profissional' : 'Assinar Plano Corporativo'}
                     </button>
                   </div>
                 );

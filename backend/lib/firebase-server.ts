@@ -23,21 +23,38 @@ try {
 }
 
 const projectId = firebaseConfig.projectId || "pixelflow-ai-d62d8";
+const storageBucket = firebaseConfig.storageBucket || "pixelflow-ai-d62d8.firebasestorage.app";
 
 if (!getApps().length) {
   try {
-    initializeApp({
-      projectId: projectId,
-      credential: admin.credential.applicationDefault()
-    });
+    if (process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL) {
+      // Production: use service account credentials from environment variables (Render/Vercel)
+      initializeApp({
+        projectId,
+        storageBucket,
+        credential: admin.credential.cert({
+          projectId,
+          clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+          privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
+        })
+      });
+      console.log('[Firebase Admin] Initialized with service account credentials.');
+    } else {
+      // Local development: attempt Application Default Credentials (gcloud auth)
+      initializeApp({
+        projectId,
+        storageBucket,
+        credential: admin.credential.applicationDefault()
+      });
+      console.log('[Firebase Admin] Initialized with Application Default Credentials.');
+    }
   } catch (err) {
-    console.warn("Could not load Application Default Credentials, initializing admin with projectId only:", err);
-    initializeApp({
-      projectId: projectId
-    });
+    console.warn("Firebase Admin init failed, running in limited mode:", err);
+    initializeApp({ projectId, storageBucket });
   }
 }
 
 export const db = admin.firestore();
 export const storage = admin.storage();
 export { admin, firebaseConfig };
+

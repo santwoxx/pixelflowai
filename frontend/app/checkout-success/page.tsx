@@ -111,7 +111,7 @@ function SuccessContent() {
       </div>
 
       <Link
-        href="/"
+        href="/app"
         className="inline-flex items-center gap-2 rounded-2xl bg-amber-400 hover:bg-amber-300 px-8 py-3 text-xs font-black uppercase tracking-widest text-slate-950 transition-all font-sans"
       >
         <span>Acessar Painel</span>
